@@ -1,25 +1,42 @@
-from llama_stack.schema_utils import json_schema_type
-from typing import Dict, Any, Union
-from pydantic import BaseModel, Field, field_validator
+from .compat import json_schema_type
+from typing import Dict, Any, Union, Optional
+from pydantic import BaseModel, Field, field_validator, SecretStr
 from pathlib import Path
+from .utils import get_scan_base_dir
 
 @json_schema_type
-class GarakEvalProviderConfig(BaseModel):
-    base_url: str = Field(
-        default="http://localhost:8321/v1",
-        description="The base URL for the OpenAI API compatible remote model serving endpoint",
+class GarakProviderBaseConfig(BaseModel):
+    """Base configuration shared by inline and remote Garak providers."""
+
+    llama_stack_url: str = Field(
+        default="http://localhost:8321",
+        description=(
+            "Llama Stack API base URL. "
+            "For inline: local endpoint (e.g., http://localhost:8321). "
+            "For remote: URL accessible from Kubeflow pods."
+        ),
     )
+    
     garak_model_type_openai: str = Field(
         default="openai.OpenAICompatible",
         description="The model type for the OpenAI API compatible model scanning",
     )
+    
     garak_model_type_function: str = Field(
         default="function.Single",
-        description="The model type for the custom function-based shield+LLMmodel scanning",
+        description="The model type for the custom function-based shield+LLM model scanning",
     )
-    timeout: int = 60*60*3 # default timeout for garak scan
-    max_workers: int = 5 # default max workers for shield scanning
-    max_concurrent_jobs: int = 5 # max concurrent garak scans
+    
+    timeout: int = Field(
+        default=60*60*3,
+        description="Default timeout for garak scan (in seconds)",
+    )
+    
+    max_workers: int = Field(
+        default=5,
+        description="Maximum workers for parallel shield scanning",
+    )
+    
     tls_verify: Union[bool, str] = Field(
         default=True,
         description="Whether to verify TLS certificates. Can be a boolean or a path to a CA certificate file.",
@@ -38,18 +55,27 @@ class GarakEvalProviderConfig(BaseModel):
             return v
         return v
 
-
-    @field_validator("base_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
+    @field_validator("llama_stack_url", "garak_model_type_openai", "garak_model_type_function", mode="before")
     @classmethod
-    def validate_base_url_garak_model_type(cls, v):
+    def validate_string_fields(cls, v):
         if isinstance(v, str):
             return v.strip()
-        raise ValueError("base_url, garak_model_type_openai and garak_model_type_function must be strings")
+        raise ValueError("String fields must be strings")
+
+
+@json_schema_type
+class GarakInlineConfig(GarakProviderBaseConfig):
+    """Garak Configuration for inline execution."""
+    
+    max_concurrent_jobs: int = Field(
+        default=5,
+        description="Maximum number of concurrent garak scans",
+    )
     
     @classmethod
     def sample_run_config(
         cls,
-        base_url: str = "${env.BASE_URL}",
+        llama_stack_url: str = "${env.LLAMA_STACK_URL:=http://localhost:8321/v1}",
         garak_model_type_openai: str = "openai.OpenAICompatible",
         garak_model_type_function: str = "function.Single",
         timeout: int = "${env.GARAK_TIMEOUT:=10800}",
@@ -60,7 +86,7 @@ class GarakEvalProviderConfig(BaseModel):
     ) -> Dict[str, Any]:
 
         return {
-            "base_url": base_url,
+            "llama_stack_url": llama_stack_url,
             "garak_model_type_openai": garak_model_type_openai,
             "garak_model_type_function": garak_model_type_function,
             "timeout": int(timeout),
@@ -70,12 +96,13 @@ class GarakEvalProviderConfig(BaseModel):
             **kwargs,
         }
 
+
 @json_schema_type
-class GarakRemoteConfig(GarakEvalProviderConfig):
-    """Configuration for Ragas evaluation provider (remote execution)."""
+class GarakRemoteConfig(GarakProviderBaseConfig):
+    """Garak Configuration for remote execution on Kubeflow Pipelines"""
 
     kubeflow_config: "KubeflowConfig" = Field(
-        description="Additional configuration parameters for remote execution",
+        description="Configuration parameters for remote execution",
     )
 
 
@@ -83,19 +110,27 @@ class KubeflowConfig(BaseModel):
     """Configuration for Kubeflow remote execution."""
 
     pipelines_endpoint: str = Field(
-        description="Kubeflow Pipelines API endpoint URL (required for remote execution)",
+        description="Kubeflow Pipelines API endpoint URL.",
     )
 
     namespace: str = Field(
-        description="Kubeflow namespace for pipeline execution",
+        description="Kubeflow namespace for pipeline execution.",
     )
 
-    experiment_name: str = Field(
-        description="Kubeflow experiment name for pipeline execution",
+    base_image: Optional[str] = Field(
+        default=None,
+        description=(
+            "Base image for Kubeflow pipeline components. "
+            "If not provided, the base image will be read from the configmap specified in constants.py."
+        ),
     )
 
-    base_image: str = Field(
-        description="Base image for Kubeflow pipeline components",
+    pipelines_api_token: Optional[SecretStr] = Field(
+        description=(
+            "Kubeflow Pipelines token with access to submit pipelines. "
+            "If not provided, the token will be read from the local kubeconfig file."
+        ),
+        default=None,
     )
 
 
@@ -170,9 +205,16 @@ class GarakScanConfig(BaseModel):
     
     VULNERABLE_SCORE: float = 0.5
 
-    base_dir: Path = Path(__file__).parent
-    scan_dir: Path = base_dir / "_scan_files"
+    # Use XDG_CACHE_HOME for scan files (automatically set to /tmp/.cache )
+    # Can be overridden with GARAK_SCAN_DIR environment variable
+    scan_dir: Path = Field(
+        default_factory=get_scan_base_dir,
+        description="Directory for storing scan files. Uses XDG_CACHE_HOME or GARAK_SCAN_DIR."
+    )
     parallel_probes: int = 8
-    cleanup_scan_dir_on_exit: bool = False
+    cleanup_scan_dir_on_exit: bool = Field(
+        default=True,
+        description="Whether to cleanup scan directory on exit."
+    )
 
-__all__ = ["GarakEvalProviderConfig", "GarakScanConfig"]
+__all__ = ["GarakInlineConfig", "GarakRemoteConfig", "GarakScanConfig"]
