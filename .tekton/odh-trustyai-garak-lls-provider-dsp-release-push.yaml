@@ -14,7 +14,7 @@ metadata:
     appstudio.openshift.io/application: opendatahub-release
     appstudio.openshift.io/component: odh-trustyai-garak-lls-provider-dsp
     pipelines.appstudio.openshift.io/type: build
-  name: odh-trustyai-garak-lls-provider-dsp-on-push
+  name: odh-trustyai-garak-lls-provider-dsp-incubation-on-push
   namespace: open-data-hub-tenant
 spec:
   params:
