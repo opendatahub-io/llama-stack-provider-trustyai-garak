@@ -15,7 +15,7 @@ metadata:
     appstudio.openshift.io/application: opendatahub-release
     appstudio.openshift.io/component: odh-trustyai-garak-lls-provider-dsp
     pipelines.appstudio.openshift.io/type: build
-  name: odh-trustyai-garak-lls-provider-dsp-incubation-on-push
+  name: odh-trustyai-garak-lls-provider-dsp-on-push
   namespace: open-data-hub-tenant
 spec:
   params:
@@ -604,7 +604,7 @@ spec:
     - name: netrc
       optional: true
   taskRunTemplate:
-    serviceAccountName: build-pipeline-llama-stack-provider-trustyai-garak-poc
+    serviceAccountName: build-pipeline-odh-trustyai-garak-lls-provider-dsp
   workspaces:
   - name: git-auth
     secret:
