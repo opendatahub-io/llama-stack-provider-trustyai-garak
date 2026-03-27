@@ -1,6 +1,6 @@
 [project]
 name = "llama-stack-provider-trustyai-garak"
-version = "0.1.8"
+version = "0.3.1"
 description = "Out-Of-Tree Llama Stack provider for Garak Red-teaming"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,13 +11,17 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack-client>=0.4.4",
-    "llama-stack-api>=0.4.4",
+    "llama-stack-client>=0.5.0",
+    "llama-stack-api>=0.5.0",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
     "kfp-server-api>=2.14.6",
     "boto3>=1.35.88",
+    # eval-hub integration
+    "eval-hub-sdk[adapter]>=0.1.2",
+    "pandas>=2.3.3",
+    "Jinja2>=3.1.6",
 ]
 
 [project.urls]
@@ -25,21 +29,76 @@ homepage = "https://github.com/trustyai-explainability/llama-stack-provider-trus
 repository = "https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak"
 
 [build-system]
-requires = ["setuptools==80.9.0"]
+requires = ["setuptools>=80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"llama_stack_provider_trustyai_garak" = ["resources/*"]
+
 [project.optional-dependencies]
-inline = [
-    "garak==0.14.0",
+sdg = [
+    "nest_asyncio>=1.6.0",
+    "sdg-hub>=0.8.8",
 ]
-dev = ["pytest", "pytest-cov",  "pytest-asyncio", "black", "isort"]
-server = ["llama-stack>=0.4.4"]
+inline = [
+    "llama-stack-provider-trustyai-garak[sdg]",
+    "garak==0.14.1+rhaiv.6",
+]
+test = ["pytest", "pytest-cov", "pytest-asyncio"]
+dev = ["llama-stack-provider-trustyai-garak[test]", "ruff", "pre-commit"]
+server = ["llama-stack>=0.5.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-python_paths = ["src"]
+pythonpath = ["src"]
 addopts = "-v"
+
+[tool.coverage.run]
+source = ["llama_stack_provider_trustyai_garak"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",   # line too long — enforced by formatter instead
+    "W291",   # trailing whitespace — pre-existing, will clean up incrementally
+    "W293",   # blank line with whitespace — pre-existing
+    "F811",   # redefined-while-unused — some test fixtures
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["F401", "F841"]
+"src/*/inline/garak_eval.py" = ["F841"]
+"src/*/remote/garak_remote_eval.py" = ["F841"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = false
+disable_error_code = [
+    "union-attr",
+    "assignment",
+    "no-any-return",
+    "arg-type",
+    "attr-defined",
+    "valid-type",
+    "no-redef",
+    "call-arg",
+    "var-annotated",
+    "return-value",
+    "index",
+    "override",
+]
