@@ -59,7 +59,7 @@ from ..result_utils import (
     parse_digest_from_report_content,
     parse_generations_from_report_content,
 )
-from ..utils import get_scan_base_dir, as_bool
+from ..utils import get_scan_base_dir, as_bool, safe_int
 from ..constants import (
     DEFAULT_TIMEOUT,
     DEFAULT_MODEL_TYPE,
@@ -67,6 +67,9 @@ from ..constants import (
     EXECUTION_MODE_SIMPLE,
     EXECUTION_MODE_KFP,
     DEFAULT_SDG_FLOW_ID,
+    DEFAULT_SDG_MAX_CONCURRENCY,
+    DEFAULT_SDG_NUM_SAMPLES,
+    DEFAULT_SDG_MAX_TOKENS,
 )
 
 logger = logging.getLogger(__name__)
@@ -343,8 +346,10 @@ class GarakAdapter(FrameworkAdapter):
                         )
                     )
 
-                callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
-                logger.info("Saved results and %d artifacts to MLflow", len(mlflow_artifacts))
+                rid = callbacks.mlflow.save(results, config, artifacts=mlflow_artifacts)
+                if rid:
+                    results.mlflow_run_id = rid
+                logger.info("Saved results and %d artifacts to MLflow with run ID: %s", len(mlflow_artifacts), rid)
             except Exception as mlflow_exc:
                 logger.warning("MLflow save failed (non-fatal): %s", mlflow_exc)
 
@@ -546,6 +551,9 @@ class GarakAdapter(FrameworkAdapter):
             "sdg_model": ip.get("sdg_model", ""),
             "sdg_api_base": ip.get("sdg_api_base", ""),
             "sdg_flow_id": ip.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID),
+            "sdg_max_concurrency": ip.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY),
+            "sdg_num_samples": ip.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES),
+            "sdg_max_tokens": ip.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS),
         }
         if model_auth_secret:
             pipeline_args["model_auth_secret_name"] = model_auth_secret
@@ -933,6 +941,20 @@ class GarakAdapter(FrameworkAdapter):
             "intents_s3_key": benchmark_config.get("intents_s3_key", profile.get("intents_s3_key", "")),
             "intents_format": benchmark_config.get("intents_format", profile.get("intents_format", "csv")),
             "sdg_flow_id": benchmark_config.get("sdg_flow_id", profile.get("sdg_flow_id", DEFAULT_SDG_FLOW_ID)),
+            "sdg_max_concurrency": safe_int(
+                benchmark_config.get(
+                    "sdg_max_concurrency", profile.get("sdg_max_concurrency", DEFAULT_SDG_MAX_CONCURRENCY)
+                ),
+                DEFAULT_SDG_MAX_CONCURRENCY,
+            ),
+            "sdg_num_samples": safe_int(
+                benchmark_config.get("sdg_num_samples", profile.get("sdg_num_samples", DEFAULT_SDG_NUM_SAMPLES)),
+                DEFAULT_SDG_NUM_SAMPLES,
+            ),
+            "sdg_max_tokens": safe_int(
+                benchmark_config.get("sdg_max_tokens", profile.get("sdg_max_tokens", DEFAULT_SDG_MAX_TOKENS)),
+                DEFAULT_SDG_MAX_TOKENS,
+            ),
             "disable_cache": as_bool(benchmark_config.get("disable_cache", False)),
         }
 
@@ -1358,6 +1380,8 @@ class _GarakCallbacks(DefaultCallbacks):
             super().report_results(results)
             return
 
+        error: str | None = None
+
         if self.sidecar_url and self._httpx_available and self._http_client:
             try:
                 url = f"{self.sidecar_url}{self._events_path_template.format(job_id=self.job_id)}"
@@ -1382,6 +1406,9 @@ class _GarakCallbacks(DefaultCallbacks):
 
                 if self.provider_id:
                     status_event["provider_id"] = self.provider_id
+
+                if results.mlflow_run_id:
+                    status_event["mlflow_run_id"] = results.mlflow_run_id
 
                 artifacts_payload: dict[str, Any] = {}
                 if results.oci_artifact:
@@ -1408,10 +1435,12 @@ class _GarakCallbacks(DefaultCallbacks):
                     len(eval_artifacts),
                 )
 
-            except Exception as exc:
-                logger.error("Failed to report results with artifacts: %s", exc)
-                logger.info("Falling back to default report_results (without artifact URLs)")
-                super().report_results(results)
+            except self.httpx.HTTPStatusError as e:
+                error = f"Failed to send results to evalhub (HTTP {e.response.status_code}): {e}"
+                logger.exception(error)
+            except Exception as e:
+                error = f"Failed to send results to evalhub: {e}"
+                logger.exception(error)
 
         logger.info(
             "Job %s completed | Benchmark: %s | Model: %s | Score: %s | Examples: %s | Duration: %.2fs",
@@ -1422,6 +1451,8 @@ class _GarakCallbacks(DefaultCallbacks):
             results.num_examples_evaluated,
             results.duration_seconds,
         )
+
+        self._signal_termination(error)
 
 
 def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
@@ -1452,14 +1483,21 @@ def main(adapter_cls: type[GarakAdapter] = GarakAdapter) -> None:
         logger.info(f"Benchmark: {adapter.job_spec.benchmark_id}")
         logger.info(f"Model: {adapter.job_spec.model.name}")
 
-        oci_auth_config = os.getenv("OCI_AUTH_CONFIG_PATH")
+        from evalhub.adapter.config import DEFAULT_TERMINATION_FILE_PATH, EvalHubMode
+        from evalhub.adapter.oci import DEFAULT_OCI_PROXY_HOST
+
         callbacks = _GarakCallbacks(
             job_id=adapter.job_spec.id,
             benchmark_id=adapter.job_spec.benchmark_id,
+            benchmark_index=adapter.job_spec.benchmark_index,
             provider_id=adapter.job_spec.provider_id,
             sidecar_url=adapter.job_spec.callback_url,
-            oci_auth_config_path=Path(oci_auth_config) if oci_auth_config else None,
-            oci_insecure=os.getenv("OCI_REGISTRY_INSECURE", "false").lower() == "true",
+            insecure=adapter.settings.evalhub_insecure,
+            oci_auth_config_path=adapter.settings.oci_auth_config_path,
+            oci_insecure=adapter.settings.oci_insecure,
+            oci_proxy_host=(DEFAULT_OCI_PROXY_HOST if adapter.settings.mode == EvalHubMode.K8S else None),
+            termination_file_path=(DEFAULT_TERMINATION_FILE_PATH if adapter.settings.mode == EvalHubMode.K8S else None),
+            mlflow_backend=adapter.settings.mlflow_backend,
         )
 
         results = adapter.run_benchmark_job(adapter.job_spec, callbacks)
