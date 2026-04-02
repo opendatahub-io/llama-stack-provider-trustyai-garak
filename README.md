@@ -1,304 +1,207 @@
-# TrustyAI Garak (`trustyai_garak`): Out-of-Tree Llama Stack Eval Provider for Garak Red Teaming
+# TrustyAI Garak: LLM Red Teaming for Llama Stack
 
-## About
-This repository implements [Garak](https://github.com/NVIDIA/garak) as a Llama Stack out-of-tree provider for **security testing and red teaming** of Large Language Models with optional **Shield Integration** for enhanced security testing. Please find the tutorial [here](https://trustyai.org/docs/main/red-teaming-introduction) to get started.
+Automated vulnerability scanning and red teaming for Large Language Models using [Garak](https://github.com/NVIDIA/garak). This project implements garak as an external evaluation provider for [Llama Stack](https://llamastack.github.io/).
 
 ## What It Does
 
-- **Automated Security Testing**: Detects prompt injection, jailbreaks, toxicity, and bias vulnerabilities
-- **Compliance Scanning**: OWASP LLM Top 10, AVID taxonomy benchmarks
-- **Shield Testing**: Compare LLM security with/without guardrails
-- **Scalable Deployment**: Local or Kubernetes/Kubeflow execution
-- **Comprehensive Reporting**: JSON, HTML, and detailed logs with vulnerability scores (0.0-1.0)
+- 🔍 **Vulnerability Assessment**: Red Team LLMs for prompt injection, jailbreaks, toxicity, bias and other vulnerabilities
+- 📋 **Compliance**: OWASP LLM Top 10, AVID taxonomy benchmarks  
+- 🛡️ **Shield Testing**: Measure guardrail effectiveness
+- ☁️ **Cloud-Native**: Runs on OpenShift AI / Kubernetes
+- 📊 **Detailed Reports**: JSON and HTML reports
+
+## Pick Your Deployment
+
+| Mode | Llama Stack server | Garak scans | Typical use case | Guide |
+|---|---|---|---|---|
+| Total Remote | OpenShift/Kubernetes | KFP pipelines | Production | [→ Setup](demos/1-openshift-ai/README.md) |
+| Partial Remote | Local machine | KFP pipelines | Development | [→ Setup](demos/2-partial-remote/README.md) |
+| Total Inline | Local machine | Local machine | Fast local testing | [→ Setup](demos/3-local-inline/README.md) |
+
+- Feature notebook: `demos/guide.ipynb`
+- Metadata reference: `BENCHMARK_METADATA_REFERENCE.md`
 
 ## Installation
 
-### Production (Remote Execution - Default)
-
 ```bash
-git clone https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak.git
-cd llama-stack-provider-trustyai-garak
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+# For Deployment 1 (Total remote)
+## no installation needed! 
+
+# For Deployment 2 (Partial remote)
+pip install llama-stack-provider-trustyai-garak
+
+# For Deployment 3 (local scans) - requires extra
+pip install "llama-stack-provider-trustyai-garak[inline]"
 ```
 
-This installs the **remote provider** by default, which executes scans on Kubernetes/Kubeflow Pipelines. This is the recommended mode for production deployments with lightweight dependencies.
-
-### Development (With Inline Execution)
-
-```bash
-# Install with inline provider for local development/testing
-pip install -e ".[inline]"
-```
-
-This adds support for **inline execution** (local scans), which requires heavier dependencies including `garak` and `langchain`.
-
-## Quick Start
-
-### 1. Configure Environment
-
-```bash
-# Model serving endpoint
-export VLLM_URL="http://your-model-endpoint/v1"
-export INFERENCE_MODEL="your-model-name"
-
-# Llama Stack endpoint (for inline: local, for remote: accessible from KFP pods)
-export LLAMA_STACK_URL="http://localhost:8321"
-```
-
-### 2. Start Server
-
-```bash
-# Inline mode - local scanning (requires [inline] extra)
-llama stack run run.yaml
-
-# Inline mode with shields (requires [inline] extra)
-llama stack run run-with-safety.yaml
-
-# Remote mode - Kubernetes/KFP (default install)
-llama stack run run-remote.yaml
-
-# Remote mode with shields (default install)
-llama stack run run-remote-safety.yaml
-```
-
-Server runs at `http://localhost:8321`
-
-### 3. Run Security Scan
+## Quick Workflow
 
 ```python
 from llama_stack_client import LlamaStackClient
 
 client = LlamaStackClient(base_url="http://localhost:8321")
 
-# Quick 5-minute scan
+# Discover Garak provider
+garak_provider = next(
+    p for p in client.providers.list()
+    if p.provider_type.endswith("trustyai_garak")
+)
+garak_provider_id = garak_provider.provider_id
+
+# List predefined benchmarks
+benchmarks = client.alpha.benchmarks.list()
+print([b.identifier for b in benchmarks if b.identifier.startswith("trustyai_garak::")])
+
+# Run a predefined benchmark
+benchmark_id = "trustyai_garak::quick"
 job = client.alpha.eval.run_eval(
-    benchmark_id="trustyai_garak::quick",
+    benchmark_id=benchmark_id,
     benchmark_config={
         "eval_candidate": {
             "type": "model",
-            "model": "your-model-name",
-            "sampling_params": {"max_tokens": 100}
+            "model": "your-model-id",
+            "sampling_params": {"max_tokens": 100},
         }
-    }
+    },
 )
 
-# Check status
-status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
-print(f"Status: {status.status}")
+# Poll status
+status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id=benchmark_id)
+print(status.status)
 
-# Get results when complete
+# Retrieve final result
 if status.status == "completed":
-    results = client.alpha.eval.get_eval_job_result(job_id=job.job_id, benchmark_id="trustyai_garak::quick")
+    job_result = client.alpha.eval.jobs.retrieve(job_id=job.job_id, benchmark_id=benchmark_id)
 ```
 
-## Available Benchmarks
+## Custom Benchmark Schema
 
-### Compliance Frameworks
-| Benchmark ID | Framework | Duration |
-|-------------|-----------|----------|
-| `trustyai_garak::owasp_llm_top10` | [OWASP LLM Top 10](https://genai.owasp.org/llm-top-10/) | ~8 hours |
-| `trustyai_garak::avid_security` | [AVID Security](https://docs.avidml.org/taxonomy/effect-sep-view/security) | ~8 hours |
-| `trustyai_garak::avid_ethics` | [AVID Ethics](https://docs.avidml.org/taxonomy/effect-sep-view/ethics) | ~30 minutes |
-| `trustyai_garak::avid_performance` | [AVID Performance](https://docs.avidml.org/taxonomy/effect-sep-view/performance) | ~40 minutes |
-
-### Test Profiles
-| Benchmark ID | Description | Duration |
-|-------------|-------------|----------|
-| `trustyai_garak::quick` | Essential security checks (3 probes) | ~5 minutes |
-| `trustyai_garak::standard` | Standard attack vectors (5 categories) | ~1 hour |
-
-_Duration estimates based on Qwen2.5 7B via vLLM_
-
-## Advanced Usage
-
-### Other Garak Probes
+Use `metadata.garak_config` for Garak command configuration. Provider-level runtime parameters (for example `timeout`, `shield_ids`) stay at top-level metadata.
 
 ```python
-client.benchmarks.register(
-    benchmark_id="custom",
+client.alpha.benchmarks.register(
+    benchmark_id="custom_promptinject",
     dataset_id="garak",
     scoring_functions=["garak_scoring"],
-    provider_benchmark_id="custom",
-    provider_id="trustyai_garak",
+    provider_id=garak_provider_id,
+    provider_benchmark_id="custom_promptinject",
     metadata={
-        "probes": ["latentinjection.LatentJailbreak", "snowball.GraphConnectivity"],
+        "garak_config": {
+            "plugins": {
+                "probe_spec": ["promptinject"]
+            },
+            "reporting": {
+                "taxonomy": "owasp"
+            }
+        },
         "timeout": 900
     }
 )
 ```
 
-### Shield Testing
+## Update and Deep-Merge Behavior
+
+- To create a tuned variant of a predefined (or existing custom) benchmark, set `provider_benchmark_id` to the predefined (or existing custom) benchmark ID and pass overrides in `metadata`.
+- Provider metadata is deep-merged, so you can override only the parts you care about.
+- Predefined benchmarks are comprehensive by design. For faster exploratory runs, lower `garak_config.run.soft_probe_prompt_cap` to reduce prompts per probe.
 
 ```python
-# Test with input shield
-client.benchmarks.register(
-    benchmark_id="with_shield",
+client.alpha.benchmarks.register(
+    benchmark_id="quick_promptinject_tuned",
     dataset_id="garak",
     scoring_functions=["garak_scoring"],
-    provider_benchmark_id="with_shield",
-    provider_id="trustyai_garak",
+    provider_id=garak_provider_id,
+    provider_benchmark_id="trustyai_garak::quick",
     metadata={
-        "probes": ["promptinject.HijackHateHumans"],
-        "shield_ids": ["Prompt-Guard-86M"]  # Input shield only
+        "garak_config": {
+            "plugins": {"probe_spec": ["promptinject"]},
+            "system": {"parallel_attempts": 20}
+        },
+        "timeout": 1200
     }
 )
+```
 
-# Test with input/output shields
-metadata={
-    "probes": ["promptinject.HijackHateHumans"],
-    "shield_config": {
-        "input": ["Prompt-Guard-86M"],
-        "output": ["Llama-Guard-3-8B"]
+```python
+# Faster (less comprehensive) variant of a predefined benchmark
+client.alpha.benchmarks.register(
+    benchmark_id="owasp_fast",
+    dataset_id="garak",
+    scoring_functions=["garak_scoring"],
+    provider_id=garak_provider_id,
+    provider_benchmark_id="trustyai_garak::owasp_llm_top10",
+    metadata={
+        "garak_config": {
+            "run": {"soft_probe_prompt_cap": 100}
+        }
     }
-}
+)
 ```
 
-### Accessing Reports
+## Shield Testing
+
+Use either `shield_ids` (all treated as input shields) or `shield_config` (explicit input/output mapping).
 
 ```python
-# Get report file IDs from job status
-job_id = job.job_id
-status = client.alpha.eval.jobs.status(job_id=job_id, benchmark_id="trustyai_garak::quick")
-
-# File IDs are in metadata (for remote: prefixed with job_id)
-scan_report_id = status.metadata.get(f"{job_id}_scan.report.jsonl") or status.metadata.get("scan.report.jsonl")
-scan_html_id = status.metadata.get(f"{job_id}_scan.report.html") or status.metadata.get("scan.report.html")
-
-# Download via Files API
-content = client.files.content(scan_report_id)
-
-# Or via HTTP
-import requests
-report = requests.get(f"http://localhost:8321/v1/files/{scan_html_id}/content")
+client.alpha.benchmarks.register(
+    benchmark_id="with_shields",
+    dataset_id="garak",
+    scoring_functions=["garak_scoring"],
+    provider_id=garak_provider_id,
+    provider_benchmark_id="with_shields",
+    metadata={
+        "garak_config": {
+            "plugins": {"probe_spec": ["promptinject.HijackHateHumans"]}
+        },
+        "shield_config": {
+            "input": ["Prompt-Guard-86M"],
+            "output": ["Llama-Guard-3-8B"]
+        },
+        "timeout": 600
+    }
+)
 ```
 
-## Remote Execution (Kubernetes/KFP)
+## Understanding Results (`_overall` and TBSA)
 
-### Setup
+`job_result.scores` contains:
 
-```bash
-# Llama Stack URL (must be accessible from Kubeflow pods - use ngrok if local)
-export KUBEFLOW_LLAMA_STACK_URL="https://your-llama-stack-url.ngrok.io"
+- probe-level entries (for example `promptinject.HijackHateHumans`)
+- synthetic `_overall` aggregate entry across all probes
 
-# Kubeflow Configuration
-export KUBEFLOW_PIPELINES_ENDPOINT="https://your-kfp-endpoint"
-export KUBEFLOW_NAMESPACE="your-namespace"
-export KUBEFLOW_BASE_IMAGE="quay.io/rh-ee-spandraj/trustyai-lls-garak-provider-dsp:latest"
-export KUBEFLOW_PIPELINES_TOKEN=""  # Optional: If not set, uses kubeconfig
+`_overall.aggregated_results` can include:
 
-# Start server
-llama stack run run-remote.yaml
-```
+- `total_attempts`
+- `vulnerable_responses`
+- `attack_success_rate`
+- `probe_count`
+- `tbsa` (Tier-Based Security Aggregate, 1.0 to 5.0, higher is better)
+- `version_probe_hash`
+- `probe_detector_pairs_contributing`
 
-**Important Notes:**
-- For remote execution, `KUBEFLOW_LLAMA_STACK_URL` must be accessible from KFP pods. If running locally, use [ngrok](https://ngrok.com/)
-- Results are stored via the configured Files API provider (S3, LocalFS, GCS, etc.)
-- Both server and KFP pods access the same Files API backend automatically
+TBSA is derived from probe:detector pass-rate and z-score DEFCON grades with tier-aware aggregation and weighting, to give a more meaningful overall security posture than a plain pass/fail metric.
 
-### Usage
+## Scan Artifacts
 
-```python
-# Same API, runs as KFP pipeline
-job = client.alpha.eval.run_eval(benchmark_id="trustyai_garak::owasp_llm_top10", ...)
+Access scan files from job metadata:
 
-# Monitor pipeline
-status = client.alpha.eval.jobs.status(job_id=job.job_id, benchmark_id="trustyai_garak::owasp_llm_top10")
-print(f"KFP Run ID: {status.metadata['kfp_run_id']}")
-```
+- `scan.log`
+- `scan.report.jsonl`
+- `scan.hitlog.jsonl`
+- `scan.avid.jsonl`
+- `scan.report.html`
 
-## Configuration Reference
+Remote mode stores prefixed keys in metadata (for example `{job_id}_scan.report.html`).
 
-### Inline Provider Config (`run.yaml`)
+## Notes on Remote Cluster Resources
 
-```yaml
-providers:
-  eval:
-    - provider_id: trustyai_garak
-      provider_type: inline::trustyai_garak
-      config:
-        llama_stack_url: ${env.LLAMA_STACK_URL:=http://localhost:8321}
-        timeout: ${env.GARAK_TIMEOUT:=10800}
-        max_concurrent_jobs: ${env.GARAK_MAX_CONCURRENT_JOBS:=5}
-        max_workers: ${env.GARAK_MAX_WORKERS:=5}
-```
+- Partial remote mode needs KFP resources only.
+- Total remote mode needs full stack resources (KFP, LlamaStackDistribution, RBAC, secrets, and Postgres manifests).
+- See `lsd_remote/` for full reference manifests.
 
-### Remote Provider Config (`run-remote.yaml`)
+## Support & Documentation
 
-```yaml
-providers:
-  eval:
-    - provider_id: trustyai_garak_remote
-      provider_type: remote::trustyai_garak
-      config:
-        llama_stack_url: ${env.KUBEFLOW_LLAMA_STACK_URL}
-        timeout: ${env.GARAK_TIMEOUT:=10800}
-        kubeflow_config:
-          pipelines_endpoint: ${env.KUBEFLOW_PIPELINES_ENDPOINT}
-          namespace: ${env.KUBEFLOW_NAMESPACE}
-          base_image: ${env.KUBEFLOW_BASE_IMAGE}
-          pipelines_api_token: ${env.KUBEFLOW_PIPELINES_TOKEN:=}
-  
-  # Files provider (S3, LocalFS, or any other backend)
-  files:
-    - provider_id: s3
-      provider_type: remote::s3
-      config:
-        bucket_name: ${env.S3_BUCKET_NAME}
-        region: ${env.AWS_DEFAULT_REGION:=us-east-1}
-        # ... S3 configuration
-```
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLAMA_STACK_URL` | `http://localhost:8321/v1` | Llama Stack API URL (inline mode) |
-| `KUBEFLOW_LLAMA_STACK_URL` | - | Llama Stack URL accessible from KFP pods (remote mode) |
-| `GARAK_TIMEOUT` | `10800` | Max scan timeout (seconds) |
-| `GARAK_MAX_CONCURRENT_JOBS` | `5` | Max concurrent scans (inline only) |
-| `GARAK_MAX_WORKERS` | `5` | Shield scanning parallelism |
-| `GARAK_SCAN_DIR` | `/tmp/.cache/llama_stack_garak_scans` | Directory for scan files (must be writable) |
-| `XDG_CACHE_HOME` | `/tmp/.cache` | XDG cache directory (auto-configured) |
-
-## Deployment Modes
-
-| Mode | Config File | Provider Type | Dependencies |
-|------|------------|---------------|--------------|
-| **Inline** | `run.yaml` | `inline::trustyai_garak` | Requires `[inline]` extra |
-| **Inline+Safety** | `run-with-safety.yaml` | `inline::trustyai_garak` | Requires `[inline]` extra |
-| **Remote** (Default) | `run-remote.yaml` | `remote::trustyai_garak` | Default install |
-| **Remote+Safety** | `run-remote-safety.yaml` | `remote::trustyai_garak` | Default install |
-
-## Architecture
-
-### Remote-First Design
-
-The provider uses a **remote-first architecture**:
-
-- **Default Install**: Lightweight, includes only KFP dependencies
-- **Remote Provider**: No garak on server, runs scans in Kubernetes pods
-- **Files API Integration**: Portable across any Files backend (S3, LocalFS, GCS)
-- **Automatic Configuration**: XDG directories auto-configured for writable paths
-
-
-## Result Interpretation
-
-- **Score Range**: 0.0 (secure) to 1.0 (vulnerable)
-- **Threshold**: Scores ≥ 0.5 indicate security concerns
-- **Reports**: Available in JSON, HTML, and log formats via Files API
-
-## Installation Options
-
-| Install Command | Providers Available | Use Case |
-|----------------|--------------------|-----------| 
-| `pip install -e .` | Remote only | Production (default) |
-| `pip install -e ".[inline]"` | Remote + Inline | Development/Testing |
-
-## Examples & Demos
-
-| Notebook | Description |
-|----------|-------------|
-| [01-getting_started](demos/01-getting_started_with_garak.ipynb) | Basic usage and custom probes (inline mode) |
-| [02-scan_with_shields](demos/02-scan_with_shields.ipynb) | Shield integration testing (inline mode) |
-| [03-remote_garak](demos/03-remote_garak.ipynb) | KFP remote execution |
+- 📚 **Tutorial**: https://trustyai.org/docs/main/red-teaming-introduction
+- 💬 **Issues**: https://github.com/trustyai-explainability/llama-stack-provider-trustyai-garak/issues
+- 🦙 **Llama Stack Docs**: https://llamastack.github.io/
+- 📖 **Garak Docs**: https://reference.garak.ai/en/latest/index.html
