@@ -8,8 +8,9 @@ from llama_stack_provider_trustyai_garak.config import (
     GarakInlineConfig,
     GarakRemoteConfig,
     KubeflowConfig,
-    GarakScanConfig
+    GarakScanConfig,
 )
+from llama_stack_provider_trustyai_garak.core.config_resolution import deep_merge_dicts
 
 
 class TestGarakInlineConfig:
@@ -33,7 +34,7 @@ class TestGarakInlineConfig:
             garak_model_type_openai="custom.model",
             timeout=1000,
             max_workers=10,
-            max_concurrent_jobs=3
+            max_concurrent_jobs=3,
         )
         assert config.llama_stack_url == "https://custom.api.com"
         assert config.garak_model_type_openai == "custom.model"
@@ -45,7 +46,7 @@ class TestGarakInlineConfig:
         """Test TLS verify with boolean values"""
         config_true = GarakInlineConfig(tls_verify=True)
         assert config_true.tls_verify is True
-        
+
         config_false = GarakInlineConfig(tls_verify=False)
         assert config_false.tls_verify is False
 
@@ -54,7 +55,7 @@ class TestGarakInlineConfig:
         # Create a temporary certificate file
         cert_file = tmp_path / "cert.pem"
         cert_file.write_text("CERTIFICATE CONTENT")
-        
+
         config = GarakInlineConfig(tls_verify=str(cert_file))
         assert config.tls_verify == str(cert_file)
 
@@ -83,10 +84,7 @@ class TestGarakInlineConfig:
     def test_sample_run_config_with_integers(self):
         """Test sample_run_config class method with integer values"""
         config_dict = GarakInlineConfig.sample_run_config(
-            llama_stack_url="https://test.api.com",
-            timeout=5000,
-            max_workers=8,
-            max_concurrent_jobs=10
+            llama_stack_url="https://test.api.com", timeout=5000, max_workers=8, max_concurrent_jobs=10
         )
         assert config_dict["llama_stack_url"] == "https://test.api.com"
         assert config_dict["timeout"] == 5000
@@ -111,64 +109,49 @@ class TestGarakRemoteConfig:
     def test_remote_config_with_kubeflow(self):
         """Test remote config with Kubeflow settings"""
         kubeflow_config = KubeflowConfig(
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="garak-namespace",
-            base_image="garak:latest"
+            pipelines_endpoint="https://kfp.example.com", namespace="garak-namespace", garak_base_image="garak:latest"
         )
-        
-        config = GarakRemoteConfig(
-            kubeflow_config=kubeflow_config
-        )
-        
+
+        config = GarakRemoteConfig(kubeflow_config=kubeflow_config)
+
         assert config.kubeflow_config.pipelines_endpoint == "https://kfp.example.com"
         assert config.kubeflow_config.namespace == "garak-namespace"
-        assert config.kubeflow_config.base_image == "garak:latest"
-        
+        assert config.kubeflow_config.garak_base_image == "garak:latest"
+
         # Should inherit base config defaults
         assert config.llama_stack_url == "http://localhost:8321"
         assert config.timeout == 60 * 60 * 3
 
-
     def test_remote_config_inherits_base_fields(self):
         """Test that GarakRemoteConfig inherits all base fields"""
         kubeflow_config = KubeflowConfig(
-            pipelines_endpoint="https://kfp.test.com",
-            namespace="test",
-            base_image="test:latest"
+            pipelines_endpoint="https://kfp.test.com", namespace="test", garak_base_image="test:latest"
         )
-        
+
         config = GarakRemoteConfig(
-            llama_stack_url="https://custom.com",
-            timeout=5000,
-            max_workers=10,
-            kubeflow_config=kubeflow_config
+            llama_stack_url="https://custom.com", timeout=5000, max_workers=10, kubeflow_config=kubeflow_config
         )
-        
+
         # Check inherited fields
         assert config.llama_stack_url == "https://custom.com"
         assert config.timeout == 5000
         assert config.max_workers == 10
         assert config.garak_model_type_openai == "openai.OpenAICompatible"
-        
+
         # Check it doesn't have inline-only field
-        assert not hasattr(config, 'max_concurrent_jobs') or config.max_concurrent_jobs == 5  # inherited default
+        assert not hasattr(config, "max_concurrent_jobs") or config.max_concurrent_jobs == 5  # inherited default
 
     def test_remote_config_tls_verify(self, tmp_path):
         """Test TLS verify setting in remote config"""
         cert_file = tmp_path / "cert.pem"
         cert_file.write_text("CERTIFICATE")
-        
+
         kubeflow_config = KubeflowConfig(
-            pipelines_endpoint="https://kfp.test.com",
-            namespace="test",
-            base_image="test:latest"
+            pipelines_endpoint="https://kfp.test.com", namespace="test", garak_base_image="test:latest"
         )
-        
-        config = GarakRemoteConfig(
-            tls_verify=str(cert_file),
-            kubeflow_config=kubeflow_config
-        )
-        
+
+        config = GarakRemoteConfig(tls_verify=str(cert_file), kubeflow_config=kubeflow_config)
+
         assert config.tls_verify == str(cert_file)
 
 
@@ -183,31 +166,23 @@ class TestKubeflowConfig:
     def test_kubeflow_config_valid(self):
         """Test valid Kubeflow configuration"""
         config = KubeflowConfig(
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="python:3.9"
+            pipelines_endpoint="https://kfp.example.com", namespace="default", garak_base_image="python:3.9"
         )
         assert config.pipelines_endpoint == "https://kfp.example.com"
         assert config.namespace == "default"
-        assert config.base_image == "python:3.9"
+        assert config.garak_base_image == "python:3.9"
         assert config.pipelines_api_token is None  # Optional field
 
     def test_kubeflow_config_missing_required_fields(self):
         """Test that required fields must be provided"""
         # Missing pipelines_endpoint
         with pytest.raises(ValidationError) as exc_info:
-            KubeflowConfig(
-                namespace="default",
-                base_image="python:3.9"
-            )
+            KubeflowConfig(namespace="default", garak_base_image="python:3.9")
         assert "pipelines_endpoint" in str(exc_info.value)
 
         # Missing namespace
         with pytest.raises(ValidationError) as exc_info:
-            KubeflowConfig(
-            pipelines_endpoint="https://kfp.example.com",
-                base_image="python:3.9"
-        )
+            KubeflowConfig(pipelines_endpoint="https://kfp.example.com", garak_base_image="python:3.9")
         assert "namespace" in str(exc_info.value)
 
     def test_kubeflow_config_with_token(self):
@@ -215,17 +190,15 @@ class TestKubeflowConfig:
         config = KubeflowConfig(
             pipelines_endpoint="https://kfp.example.com",
             namespace="default",
-            base_image="test:latest",
-            pipelines_api_token="test-token-12345"
+            garak_base_image="test:latest",
+            pipelines_api_token="test-token-12345",
         )
         assert config.pipelines_api_token.get_secret_value() == "test-token-12345"
 
     def test_kubeflow_config_token_default_none(self):
         """Test that pipelines_api_token defaults to None"""
         config = KubeflowConfig(
-            pipelines_endpoint="https://kfp.example.com",
-            namespace="default",
-            base_image="test:latest"
+            pipelines_endpoint="https://kfp.example.com", namespace="default", garak_base_image="test:latest"
         )
         assert config.pipelines_api_token is None
 
@@ -236,71 +209,84 @@ class TestGarakScanConfig:
     def test_default_scan_config(self):
         """Test default scan configuration"""
         config = GarakScanConfig()
-        
+
         # Check framework profiles
         assert "trustyai_garak::owasp_llm_top10" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_security" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_ethics" in config.FRAMEWORK_PROFILES
         assert "trustyai_garak::avid_performance" in config.FRAMEWORK_PROFILES
-        
+        assert "trustyai_garak::avid" in config.FRAMEWORK_PROFILES
+        assert "trustyai_garak::quality" in config.FRAMEWORK_PROFILES
+        assert "trustyai_garak::cwe" in config.FRAMEWORK_PROFILES
+
         # Check scan profiles
         assert "trustyai_garak::quick" in config.SCAN_PROFILES
-        assert "trustyai_garak::standard" in config.SCAN_PROFILES
-        
+        # Note: "standard" profile removed - only "quick" for fast testing
+
         # Check other defaults
         assert config.VULNERABLE_SCORE == 0.5
         assert config.parallel_probes == 8
         assert config.cleanup_scan_dir_on_exit is True
-        assert config.scan_dir.name == "llama_stack_garak_scans"
+        assert config.scan_dir.name == "trustyai_garak_scans"
 
     def test_framework_profile_structure(self):
-        """Test framework profile structure"""
+        """Test framework profile structure with new garak_config format"""
         config = GarakScanConfig()
         owasp_profile = config.FRAMEWORK_PROFILES["trustyai_garak::owasp_llm_top10"]
-        
+
         assert "name" in owasp_profile
         assert "description" in owasp_profile
-        assert "taxonomy_filters" in owasp_profile
+        assert "garak_config" in owasp_profile  # NEW: garak_config instead of individual keys
         assert "timeout" in owasp_profile
         assert "documentation" in owasp_profile
-        assert "taxonomy" in owasp_profile
-        assert isinstance(owasp_profile["taxonomy_filters"], list)
-        assert owasp_profile["taxonomy"] == "owasp"
+
+        # Check garak_config structure
+        garak_config = owasp_profile["garak_config"]
+        assert "run" in garak_config
+        assert "reporting" in garak_config
+        assert garak_config["run"]["probe_tags"] == "owasp:llm"  # NEW: probe_tags instead of taxonomy_filters
+        assert garak_config["reporting"]["taxonomy"] == "owasp"
 
     def test_scan_profile_structure(self):
-        """Test scan profile structure"""
+        """Test scan profile structure with new garak_config format"""
         config = GarakScanConfig()
         quick_profile = config.SCAN_PROFILES["trustyai_garak::quick"]
-        
+
         assert "name" in quick_profile
         assert "description" in quick_profile
-        assert "probes" in quick_profile
+        assert "garak_config" in quick_profile  # NEW: garak_config instead of top-level keys
         assert "timeout" in quick_profile
-        assert isinstance(quick_profile["probes"], list)
-        assert len(quick_profile["probes"]) > 0
+
+        # Check garak_config structure
+        garak_config = quick_profile["garak_config"]
+        assert "plugins" in garak_config
+        assert "probe_spec" in garak_config["plugins"]  # NEW: probe_spec instead of probes
+        assert garak_config["plugins"]["probe_spec"] is not None
+        assert len(garak_config["plugins"]["probe_spec"]) > 0
 
     def test_scan_dir_path(self):
         """Test scan directory path construction"""
         config = GarakScanConfig()
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
         assert config.scan_dir.is_absolute()
 
     def test_scan_dir_respects_garak_scan_dir_env(self, monkeypatch, tmp_path):
         """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
         custom_scan_dir = tmp_path / "custom_garak_scans"
         custom_scan_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Set GARAK_SCAN_DIR environment variable
         monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
-        
+
         # Reload utils to pick up new environment variable
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
-        
+
         # Create config - should use GARAK_SCAN_DIR
         config = GarakScanConfig()
-        
+
         assert config.scan_dir == custom_scan_dir
         assert str(config.scan_dir) == str(custom_scan_dir)
 
@@ -308,22 +294,23 @@ class TestGarakScanConfig:
         """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
         # Clear GARAK_SCAN_DIR if it exists
         monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
-        
+
         # Set XDG_CACHE_HOME
         custom_cache = tmp_path / "custom_cache"
         custom_cache.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
-        
+
         # Reload the utils module to pick up new XDG_CACHE_HOME
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
-        
+
         config = GarakScanConfig()
-        
-        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+
+        # Should be XDG_CACHE_HOME/trustyai_garak_scans
         assert str(custom_cache) in str(config.scan_dir)
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
 
     def test_cleanup_scan_dir_defaults_to_true(self):
         """Test that cleanup_scan_dir_on_exit defaults to True for production"""
@@ -334,18 +321,19 @@ class TestGarakScanConfig:
         """Test that GARAK_SCAN_DIR environment variable overrides default scan_dir"""
         custom_scan_dir = tmp_path / "custom_garak_scans"
         custom_scan_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Set GARAK_SCAN_DIR environment variable
         monkeypatch.setenv("GARAK_SCAN_DIR", str(custom_scan_dir))
-        
+
         # Reload utils to pick up new environment variable
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
-        
+
         # Create config - should use GARAK_SCAN_DIR
         config = GarakScanConfig()
-        
+
         assert config.scan_dir == custom_scan_dir
         assert str(config.scan_dir) == str(custom_scan_dir)
 
@@ -353,24 +341,162 @@ class TestGarakScanConfig:
         """Test that scan_dir uses XDG_CACHE_HOME when GARAK_SCAN_DIR not set"""
         # Clear GARAK_SCAN_DIR if it exists
         monkeypatch.delenv("GARAK_SCAN_DIR", raising=False)
-        
+
         # Set XDG_CACHE_HOME
         custom_cache = tmp_path / "custom_cache"
         custom_cache.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv("XDG_CACHE_HOME", str(custom_cache))
-        
+
         # Reload the utils module to pick up new XDG_CACHE_HOME
         from importlib import reload
         from llama_stack_provider_trustyai_garak import utils
+
         reload(utils)
-        
+
         config = GarakScanConfig()
-        
-        # Should be XDG_CACHE_HOME/llama_stack_garak_scans
+
+        # Should be XDG_CACHE_HOME/trustyai_garak_scans
         assert str(custom_cache) in str(config.scan_dir)
-        assert "llama_stack_garak_scans" in str(config.scan_dir)
+        assert "trustyai_garak_scans" in str(config.scan_dir)
 
     def test_cleanup_scan_dir_defaults_to_true(self):
         """Test that cleanup_scan_dir_on_exit defaults to True for production"""
         config = GarakScanConfig()
         assert config.cleanup_scan_dir_on_exit is True
+
+    @pytest.mark.parametrize(
+        "profile_key, expected_probe_tag, expected_taxonomy",
+        [
+            ("trustyai_garak::owasp_llm_top10", "owasp:llm", "owasp"),
+            ("trustyai_garak::avid", "avid-effect", "avid-effect"),
+            ("trustyai_garak::avid_security", "avid-effect:security", "avid-effect"),
+            ("trustyai_garak::avid_ethics", "avid-effect:ethics", "avid-effect"),
+            ("trustyai_garak::avid_performance", "avid-effect:performance", "avid-effect"),
+            ("trustyai_garak::quality", "quality", "quality"),
+            ("trustyai_garak::cwe", "cwe", "cwe"),
+        ],
+    )
+    def test_framework_profile_structure(self, profile_key, expected_probe_tag, expected_taxonomy):
+        """Test framework profile structure with new garak_config format"""
+        config = GarakScanConfig()
+        profile = config.FRAMEWORK_PROFILES[profile_key]
+
+        # Basic structure checks shared across all framework profiles
+        assert "name" in profile
+        assert "description" in profile
+        assert "garak_config" in profile  # NEW: garak_config instead of individual keys
+        assert "timeout" in profile
+
+        garak_config = profile["garak_config"]
+
+        # Ensure expected garak_config sections exist
+        assert "run" in garak_config
+        assert "reporting" in garak_config
+        assert "probe_tags" in garak_config["run"]
+
+        # (1) Validate that the expected probe tag matches exactly
+        assert garak_config["run"]["probe_tags"] == expected_probe_tag
+
+        # (2) Validate taxonomy wiring
+        assert garak_config["reporting"]["taxonomy"] == expected_taxonomy
+
+
+class TestDeepMergeDicts:
+    """Verify deep_merge_dicts honours leaf-level overrides without clobbering siblings."""
+
+    def test_override_single_leaf_preserves_siblings(self):
+        base = {
+            "plugins": {
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "depth": 10,
+                            "width": 10,
+                            "branching_factor": 4,
+                            "attack_model_config": {"uri": "", "max_tokens": 500},
+                        }
+                    }
+                }
+            }
+        }
+        override = {
+            "plugins": {
+                "probes": {
+                    "tap": {
+                        "TAPIntent": {
+                            "depth": 20,
+                        }
+                    }
+                }
+            }
+        }
+        result = deep_merge_dicts(base, override)
+        tap = result["plugins"]["probes"]["tap"]["TAPIntent"]
+        assert tap["depth"] == 20
+        assert tap["width"] == 10
+        assert tap["branching_factor"] == 4
+        assert tap["attack_model_config"]["max_tokens"] == 500
+
+    def test_override_nested_dict_leaf_preserves_sibling_keys(self):
+        base = {
+            "plugins": {
+                "detectors": {
+                    "judge": {
+                        "detector_model_config": {"uri": "http://old", "api_key": "k1", "max_tokens": 200},
+                        "MulticlassJudge": {
+                            "system_prompt": "Default prompt",
+                            "score_key": "complied",
+                            "confidence_cutoff": 70,
+                        },
+                    }
+                }
+            }
+        }
+        override = {
+            "plugins": {
+                "detectors": {
+                    "judge": {
+                        "MulticlassJudge": {
+                            "system_prompt": "New custom prompt",
+                        }
+                    }
+                }
+            }
+        }
+        result = deep_merge_dicts(base, override)
+        judge = result["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_config"]["uri"] == "http://old"
+        assert judge["detector_model_config"]["max_tokens"] == 200
+        mcj = judge["MulticlassJudge"]
+        assert mcj["system_prompt"] == "New custom prompt"
+        assert mcj["score_key"] == "complied"
+        assert mcj["confidence_cutoff"] == 70
+
+    def test_override_does_not_mutate_base(self):
+        base = {"a": {"b": 1, "c": 2}}
+        override = {"a": {"b": 99}}
+        result = deep_merge_dicts(base, override)
+        assert result["a"]["b"] == 99
+        assert result["a"]["c"] == 2
+        assert base["a"]["b"] == 1, "Original base must not be mutated"
+
+    def test_adding_new_key_at_deep_level(self):
+        base = {"plugins": {"detectors": {"judge": {"detector_model_name": "m1"}}}}
+        override = {"plugins": {"detectors": {"judge": {"MulticlassJudge": {"system_prompt": "Added later"}}}}}
+        result = deep_merge_dicts(base, override)
+        judge = result["plugins"]["detectors"]["judge"]
+        assert judge["detector_model_name"] == "m1"
+        assert judge["MulticlassJudge"]["system_prompt"] == "Added later"
+
+    def test_dict_override_merges_preserving_siblings(self):
+        base = {"run": {"generations": 5, "eval_threshold": 0.5}}
+        override = {"run": {"generations": 100}}
+        result = deep_merge_dicts(base, override)
+        assert result["run"]["generations"] == 100
+        assert result["run"]["eval_threshold"] == 0.5
+
+    def test_non_dict_override_replaces_entirely(self):
+        base = {"run": {"generations": 5, "eval_threshold": 0.5}}
+        override = {"run": "disabled"}
+        result = deep_merge_dicts(base, override)
+        assert result["run"] == "disabled"
