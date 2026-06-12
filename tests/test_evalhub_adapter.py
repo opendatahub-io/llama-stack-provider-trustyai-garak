@@ -756,6 +756,123 @@ class TestS3Download:
         assert list(local_dir.iterdir()) == []
 
 
+class TestResolveS3Credentials:
+    """Tests for _resolve_s3_credentials merging logic."""
+
+    def _make_kfp_config(self, **overrides):
+        defaults = {
+            "s3_bucket": "",
+            "s3_endpoint": "",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_kfp_config_takes_precedence_over_secret(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        kfp_cfg = self._make_kfp_config(s3_bucket="cfg-bucket", s3_endpoint="http://cfg:9000")
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "region": "us-west-2",
+        }
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+        assert resolved["bucket"] == "cfg-bucket"
+        assert resolved["endpoint_url"] == "http://cfg:9000"
+        assert resolved["access_key"] == "ak"
+        assert resolved["secret_key"] == "sk"
+        assert resolved["region"] == "us-west-2"
+
+    def test_falls_back_to_secret_when_kfp_config_empty(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        kfp_cfg = self._make_kfp_config()
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "region": "eu-west-1",
+        }
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+        assert resolved["bucket"] == "secret-bucket"
+        assert resolved["endpoint_url"] == "http://secret:9000"
+
+    def test_falls_back_to_env_when_both_empty(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("AWS_S3_BUCKET", "env-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "http://env:9000")
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, {})
+        assert resolved["bucket"] == "env-bucket"
+        assert resolved["endpoint_url"] == "http://env:9000"
+
+    def test_secret_takes_precedence_over_env_when_kfp_empty(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.setenv("AWS_S3_BUCKET", "env-bucket")
+        monkeypatch.setenv("AWS_S3_ENDPOINT", "http://env:9000")
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "region": "eu-west-1",
+        }
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+        assert resolved["bucket"] == "secret-bucket"
+        assert resolved["endpoint_url"] == "http://secret:9000"
+
+    def test_mismatch_logs_warning(self, monkeypatch, caplog):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        import logging
+
+        kfp_cfg = self._make_kfp_config(s3_bucket="cfg-bucket", s3_endpoint="http://cfg:9000")
+        secret = {
+            "bucket": "secret-bucket",
+            "endpoint_url": "http://secret:9000",
+            "access_key": "",
+            "secret_key": "",
+            "region": "",
+        }
+
+        with caplog.at_level(logging.WARNING):
+            resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+
+        assert resolved["bucket"] == "cfg-bucket"
+        assert resolved["endpoint_url"] == "http://cfg:9000"
+        assert any("S3 bucket mismatch" in msg for msg in caplog.messages)
+        assert any("S3 endpoint_url mismatch" in msg for msg in caplog.messages)
+
+    def test_matching_values_no_warning(self, monkeypatch, caplog):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        import logging
+
+        kfp_cfg = self._make_kfp_config(s3_bucket="same-bucket", s3_endpoint="http://same:9000")
+        secret = {
+            "bucket": "same-bucket",
+            "endpoint_url": "http://same:9000",
+            "access_key": "ak",
+            "secret_key": "sk",
+            "region": "",
+        }
+        with caplog.at_level(logging.WARNING):
+            resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, secret)
+
+        assert resolved["bucket"] == "same-bucket"
+        assert not any("mismatch" in msg for msg in caplog.messages)
+
+    def test_none_returned_when_all_sources_empty(self, monkeypatch):
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        monkeypatch.delenv("AWS_S3_BUCKET", raising=False)
+        monkeypatch.delenv("AWS_S3_ENDPOINT", raising=False)
+        kfp_cfg = self._make_kfp_config()
+        resolved = module.GarakAdapter._resolve_s3_credentials(kfp_cfg, {})
+        assert resolved["bucket"] is None
+        assert resolved["endpoint_url"] is None
+        assert resolved["access_key"] is None
+
+
 class TestPollKFPRun:
     """Tests for _poll_kfp_run static method."""
 
@@ -1577,6 +1694,301 @@ class TestBuildConfigIntentsOverrides:
         assert intents_params["sdg_api_base"] == "http://legacy-sdg:5000"
 
 
+class TestTargetDefaultParameters:
+    """Tests for TARGET_DEFAULT_PARAMETERS fallback (max_tokens=512)."""
+
+    def test_default_max_tokens_when_no_model_parameters(self, monkeypatch, tmp_path):
+        """When neither config.model.parameters nor benchmark_config model_parameters
+        are provided, the target generator should use TARGET_DEFAULT_PARAMETERS."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="no-params-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            parameters={},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        gen = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]
+        assert gen["max_tokens"] == 512
+
+    def test_explicit_model_parameters_not_overwritten(self, monkeypatch, tmp_path):
+        """When config.model.parameters is set, those values are used as-is."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="explicit-params-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(
+                url="http://model:8000",
+                name="my-llm",
+                parameters={"max_tokens": 1024, "temperature": 0.7},
+            ),
+            parameters={},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        gen = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]
+        assert gen["max_tokens"] == 1024
+        assert gen["temperature"] == 0.7
+
+    def test_benchmark_config_model_parameters_used(self, monkeypatch, tmp_path):
+        """When model has no parameters attr but benchmark_config has model_parameters,
+        those are used instead of the default."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="bench-params-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            parameters={"model_parameters": {"max_tokens": 256}},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        gen = config_dict["plugins"]["generators"]["openai"]["OpenAICompatible"]
+        assert gen["max_tokens"] == 256
+        assert "temperature" not in gen
+
+
+class TestTranslationLangproviders:
+    """Tests for translation langprovider resolution in _build_config_from_spec."""
+
+    def test_default_uses_attacker_llm(self, monkeypatch, tmp_path):
+        """Default: single-role intents_models -> attacker LLM reused for translation."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="trans-default-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={**_INTENTS_MODELS_SINGLE},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        langproviders = config_dict["run"]["langproviders"]
+        assert len(langproviders) == 2
+        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+        assert langproviders[0]["uri"] == "http://judge:8000/v1"
+        assert langproviders[0]["model_name"] == "judge-model"
+        assert langproviders[0]["api_key"] == "__FROM_ENV__"
+        assert langproviders[1]["language"] == "en,zh"
+
+    def test_separate_attacker_used_for_translation(self, monkeypatch, tmp_path):
+        """When all 3 roles provided, attacker url/name are used for translation."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="trans-atk-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={**_INTENTS_MODELS_ALL_ROLES},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        langproviders = config_dict["run"]["langproviders"]
+        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+        assert langproviders[0]["uri"] == "http://attacker:9000/v1"
+        assert langproviders[0]["model_name"] == "atk-model"
+
+    def test_dedicated_translation_model(self, monkeypatch, tmp_path):
+        """intents_models.translation takes priority over attacker."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="trans-dedicated-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                "intents_models": {
+                    **_INTENTS_MODELS_ALL_ROLES["intents_models"],
+                    "translation": {"url": "http://translator:6000/v1", "name": "translator-llm"},
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        langproviders = config_dict["run"]["langproviders"]
+        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+        assert langproviders[0]["uri"] == "http://translator:6000/v1"
+        assert langproviders[0]["model_name"] == "translator-llm"
+
+    def test_translation_use_hf_flag(self, monkeypatch, tmp_path):
+        """translation_use_hf=True forces HF models even when attacker is available."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="trans-hf-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "translation_use_hf": True,
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        langproviders = config_dict["run"]["langproviders"]
+        assert len(langproviders) == 2
+        assert langproviders[0]["model_type"] == "local.LocalHFTranslator"
+        assert langproviders[0]["model_name"] == "Helsinki-NLP/opus-mt-zh-en"
+        assert "api_key" not in langproviders[0]
+
+    def test_non_intents_profile_no_langproviders(self, monkeypatch, tmp_path):
+        """Non-intents profiles should not get langproviders injected."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="native-no-lp-job",
+            benchmark_id="trustyai_garak::quick",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://model:8000", name="my-llm"),
+            parameters={},
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        assert "langproviders" not in config_dict.get("run", {})
+
+    def test_no_langproviders_when_translation_probe_excluded(self, monkeypatch, tmp_path):
+        """When probe_spec overrides remove TranslationIntent, langproviders are not set."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="trans-excluded-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "probe_spec": "spo.SPOIntent,tap.TAPIntent",
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        assert "langproviders" not in config_dict.get("run", {})
+
+    def test_list_probe_spec_with_translation_injects_langproviders(self, monkeypatch, tmp_path):
+        """When probe_spec is a list containing TranslationIntent, langproviders are injected."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="list-probe-with-trans-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "probe_spec": ["spo.SPOIntent", "multilingual.TranslationIntent", "tap.TAPIntent"],
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        langproviders = config_dict["run"]["langproviders"]
+        assert len(langproviders) == 2
+        assert langproviders[0]["model_type"] == "llm.LLMTranslator"
+
+    def test_list_probe_spec_without_translation_skips_langproviders(self, monkeypatch, tmp_path):
+        """When probe_spec is a list without TranslationIntent, langproviders are not set."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="list-probe-no-trans-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                **_INTENTS_MODELS_ALL_ROLES,
+                "garak_config": {
+                    "plugins": {
+                        "probe_spec": ["spo.SPOIntent", "tap.TAPIntent"],
+                    }
+                },
+            },
+            exports=None,
+        )
+
+        report_prefix = tmp_path / "scan"
+        config_dict, _, _ = adapter._build_config_from_spec(job, report_prefix)
+
+        assert "langproviders" not in config_dict.get("run", {})
+
+    def test_intents_profile_no_hardcoded_hf_langproviders(self, monkeypatch, tmp_path):
+        """The intents profile should no longer contain hardcoded HF langproviders."""
+        from llama_stack_provider_trustyai_garak.core.config_resolution import resolve_scan_profile
+
+        profile = resolve_scan_profile("trustyai_garak::intents")
+        garak_config = profile.get("garak_config", {})
+        run_config = garak_config.get("run", {})
+        assert "langproviders" not in run_config
+
+
 class TestResolveIntentsApiKey:
     """Tests for _resolve_intents_api_key static method."""
 
@@ -1701,35 +2113,347 @@ class TestResolveIntentsApiKey:
         assert result == "direct-wins"
 
 
-class TestIntentsRequiresKFP:
-    """Intents benchmarks must reject non-KFP execution modes."""
+class TestSimpleIntentsMode:
+    """Tests for intents benchmark running in simple (non-KFP) mode."""
 
-    def test_intents_simple_mode_raises(self, monkeypatch, tmp_path):
+    def _make_adapter_and_job(self, monkeypatch, tmp_path, parameters=None):
         module = _load_evalhub_garak_adapter(monkeypatch)
         adapter = module.GarakAdapter()
         monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
+        job = SimpleNamespace(
+            id="simple-intents-job",
+            benchmark_id="trustyai_garak::intents",
+            benchmark_index=0,
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
+            parameters={
+                "execution_mode": "simple",
+                **_INTENTS_MODELS_ALL_ROLES,
+                **(parameters or {}),
+            },
+            exports=None,
+        )
+        return module, adapter, job
+
+    def test_simple_intents_dispatches_to_run_simple_intents(self, monkeypatch, tmp_path):
+        """Verify art_intents + simple mode routes to _run_simple_intents."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        captured = {}
+        report_prefix = tmp_path / "simple-intents-job" / "scan"
+        report_prefix.parent.mkdir(parents=True, exist_ok=True)
+        report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+
+        def _fake_run_simple_intents(self, config, callbacks, garak_config_dict, scan_dir, timeout, intents_params):
+            captured["called"] = True
+            captured["intents_params"] = intents_params
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(module.GarakAdapter, "_run_simple_intents", _fake_run_simple_intents)
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
 
         class _Callbacks:
             def report_status(self, _update):
                 return None
 
+        adapter.run_benchmark_job(job, _Callbacks())
+        assert captured.get("called") is True
+        assert captured["intents_params"]["art_intents"] is True
+
+    def test_simple_intents_default_taxonomy_and_sdg(self, monkeypatch, tmp_path):
+        """Full pipeline: default taxonomy -> SDG -> normalize -> scan."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        import pandas as pd
+
+        fake_raw_df = pd.DataFrame(
+            {
+                "policy_concept": ["Fraud", "Fraud"],
+                "concept_definition": ["Fraud prompts", "Fraud prompts"],
+                "prompt": ["Commit fraud?", "How to scam?"],
+            }
+        )
+
+        sdg_captured = {}
+
+        def _fake_run_sdg_generation(taxonomy_df, sdg_model, sdg_api_base, **kwargs):
+            sdg_captured["taxonomy_len"] = len(taxonomy_df)
+            sdg_captured["sdg_model"] = sdg_model
+            sdg_captured["sdg_api_base"] = sdg_api_base
+            sdg_captured.update(kwargs)
+            return fake_raw_df
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            sdg_captured["prompts_csv_path"] = str(prompts_csv_path)
+            sdg_captured["config_json"] = config_json
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            _fake_run_sdg_generation,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert sdg_captured["taxonomy_len"] == 8  # BASE_TAXONOMY has 8 entries
+        assert sdg_captured["sdg_model"] == "sdg-model"
+        assert sdg_captured["sdg_api_base"] == "http://sdg:7000/v1"
+        assert sdg_captured["sdg_flow_id"] == "major-sage-742"
+        assert sdg_captured["sdg_max_concurrency"] == 10
+        assert sdg_captured["sdg_num_samples"] == 0
+        assert sdg_captured["sdg_max_tokens"] == 0
+        assert (scan_dir / "sdg_raw_output.csv").exists()
+        assert (scan_dir / "sdg_normalized_output.csv").exists()
+        assert sdg_captured.get("prompts_csv_path") is not None
+
+    def test_simple_intents_custom_taxonomy_from_local_path(self, monkeypatch, tmp_path):
+        """Custom taxonomy loaded from a local file path (pre-downloaded by SDK)."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        taxonomy_file = tmp_path / "test_data" / "taxonomy.csv"
+        taxonomy_file.parent.mkdir(parents=True, exist_ok=True)
+        taxonomy_file.write_text(
+            "policy_concept,concept_definition\nCustomHarm,Custom harm definition\n",
+            encoding="utf-8",
+        )
+        job.parameters["policy_s3_key"] = str(taxonomy_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        import pandas as pd
+
+        sdg_captured = {}
+
+        def _fake_run_sdg_generation(taxonomy_df, **kwargs):
+            sdg_captured["taxonomy_concepts"] = taxonomy_df["policy_concept"].tolist()
+            return pd.DataFrame(
+                {
+                    "policy_concept": ["CustomHarm"],
+                    "concept_definition": ["Custom harm definition"],
+                    "prompt": ["Do something harmful"],
+                }
+            )
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.run_sdg_generation",
+            _fake_run_sdg_generation,
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+        assert sdg_captured["taxonomy_concepts"] == ["CustomHarm"]
+
+    def test_simple_intents_bypass_sdg_from_local_path(self, monkeypatch, tmp_path):
+        """Bypass SDG: load pre-generated prompts from a local file."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        intents_file = tmp_path / "test_data" / "prompts.csv"
+        intents_file.parent.mkdir(parents=True, exist_ok=True)
+        intents_file.write_text(
+            "category,prompt,description\nharm,Do bad things,Harm prompts\n",
+            encoding="utf-8",
+        )
+        job.parameters["intents_s3_key"] = str(intents_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        setup_captured = {}
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            import pandas as pd
+
+            setup_captured["prompts"] = pd.read_csv(prompts_csv_path)
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        assert (scan_dir / "sdg_raw_output.csv").exists()
+        assert (scan_dir / "sdg_normalized_output.csv").exists()
+        assert len(setup_captured["prompts"]) == 1
+        assert setup_captured["prompts"]["category"].iloc[0] == "harm"
+
+    def test_simple_intents_missing_taxonomy_file_raises(self, monkeypatch, tmp_path):
+        """Missing taxonomy file raises FileNotFoundError."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+        job.parameters["policy_s3_key"] = "/nonexistent/taxonomy.csv"
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(FileNotFoundError, match="Taxonomy file not found"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_missing_intents_file_raises(self, monkeypatch, tmp_path):
+        """Missing bypass prompts file raises FileNotFoundError."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+        job.parameters["intents_s3_key"] = "/nonexistent/prompts.csv"
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(FileNotFoundError, match="Intents file not found"):
+            adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_missing_sdg_model_raises(self, monkeypatch, tmp_path):
+        """SDG path without sdg_model raises ValueError."""
+        module = _load_evalhub_garak_adapter(monkeypatch)
+        adapter = module.GarakAdapter()
+        monkeypatch.setenv("GARAK_SCAN_DIR", str(tmp_path))
+
         job = SimpleNamespace(
-            id="intents-simple-job",
-            benchmark_id="trustyai_garak::intents_spo",
+            id="simple-intents-job",
+            benchmark_id="trustyai_garak::intents",
             benchmark_index=0,
-            model=SimpleNamespace(
-                url="http://localhost:8000",
-                name="test-model",
-            ),
+            model=SimpleNamespace(url="http://target:8000", name="target-llm"),
             parameters={
                 "execution_mode": "simple",
-                "art_intents": True,
+                "intents_models": {
+                    "judge": {"url": "http://judge:8000/v1", "name": "judge-model"},
+                    "attacker": {"url": "http://attacker:9000/v1", "name": "atk-model"},
+                    "evaluator": {"url": "http://evaluator:9001/v1", "name": "eval-model"},
+                },
             },
             exports=None,
         )
 
-        with pytest.raises(ValueError, match="Intents benchmarks are only supported in KFP"):
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        with pytest.raises(ValueError, match="sdg_model.*sdg_api_base"):
             adapter.run_benchmark_job(job, _Callbacks())
+
+    def test_simple_intents_persists_artifacts_to_scan_dir(self, monkeypatch, tmp_path):
+        """Verify sdg_raw_output.csv and sdg_normalized_output.csv are in scan_dir."""
+        module, adapter, job = self._make_adapter_and_job(monkeypatch, tmp_path)
+
+        intents_file = tmp_path / "test_data" / "prompts.csv"
+        intents_file.parent.mkdir(parents=True, exist_ok=True)
+        intents_file.write_text(
+            "category,prompt,description\nfraud,Scam people,Fraud desc\nviolence,Attack,Violence desc\n",
+            encoding="utf-8",
+        )
+        job.parameters["intents_s3_key"] = str(intents_file)
+
+        scan_dir = tmp_path / "simple-intents-job"
+        scan_dir.mkdir(parents=True, exist_ok=True)
+
+        def _fake_setup_and_run(config_json, prompts_csv_path, scan_dir, timeout_seconds):
+            report_prefix = scan_dir / "scan"
+            report_prefix.with_suffix(".report.jsonl").write_text("{}", encoding="utf-8")
+            return module.GarakScanResult(
+                returncode=0,
+                stdout="",
+                stderr="",
+                report_prefix=report_prefix,
+            )
+
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.setup_and_run_garak",
+            _fake_setup_and_run,
+        )
+        monkeypatch.setattr(
+            module.GarakAdapter,
+            "_parse_results",
+            lambda self, result, eval_threshold, art_intents=False: ([], None, 0, {"total_attempts": 0}),
+        )
+
+        class _Callbacks:
+            def report_status(self, _update):
+                return None
+
+        adapter.run_benchmark_job(job, _Callbacks())
+
+        raw_csv = scan_dir / "sdg_raw_output.csv"
+        norm_csv = scan_dir / "sdg_normalized_output.csv"
+        assert raw_csv.exists()
+        assert norm_csv.exists()
+
+        import pandas as pd
+
+        norm_df = pd.read_csv(norm_csv)
+        assert "category" in norm_df.columns
+        assert "prompt" in norm_df.columns
+        assert len(norm_df) == 2
 
 
 class TestKFPIntentsMode:
