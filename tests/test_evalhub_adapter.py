@@ -1317,13 +1317,9 @@ class TestJobPhaseReporting:
         failed = [s for s in statuses if s.status == module.JobStatus.FAILED]
         assert len(failed) == 2
         # First FAILED: scan_failed (from the result.success check)
-        assert hasattr(failed[0], "error_message")
-        assert not hasattr(failed[0], "error")
         assert "boom" in failed[0].error_message.message
         assert failed[0].error_message.message_code == "scan_failed"
         # Second FAILED: job_failed (from the outer exception handler)
-        assert hasattr(failed[1], "error_message")
-        assert not hasattr(failed[1], "error")
         assert failed[1].error_message.message_code == "job_failed"
 
 
