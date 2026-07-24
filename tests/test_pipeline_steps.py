@@ -9,6 +9,10 @@ from unittest.mock import MagicMock, Mock, patch
 import pandas as pd
 import pytest
 
+from llama_stack_provider_trustyai_garak.core.garak_runner import (
+    GarakScanResult,
+    _extract_scan_log_issues,
+)
 from llama_stack_provider_trustyai_garak.core.pipeline_steps import (
     log_kfp_metrics,
     normalize_prompts,
@@ -121,6 +125,129 @@ class TestResolveApiKey:
             str(tmp_path),
         )
         assert resolve_api_key("sdg") == "DUMMY"
+
+    def test_lowercase_hyphenated_key_from_volume(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge-api-key").write_text("lower-key")
+        assert resolve_api_key("judge") == "lower-key"
+
+    def test_uppercase_file_takes_precedence_over_lowercase(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "JUDGE_API_KEY").write_text("upper-key")
+        (tmp_path / "judge-api-key").write_text("lower-key")
+        assert resolve_api_key("judge") == "upper-key"
+
+    def test_evalhub_secret_role_specific_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-judge" if name == "JUDGE_API_KEY" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-judge"
+
+    def test_evalhub_secret_lowercase_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("SDG_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-sdg" if name == "sdg-api-key" else "",
+        )
+        assert resolve_api_key("sdg") == "evalhub-sdg"
+
+    def test_kfp_volume_takes_precedence_over_evalhub_secret(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "JUDGE_API_KEY").write_text("kfp-key")
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-key",
+        )
+        assert resolve_api_key("judge") == "kfp-key"
+
+    def test_evalhub_secret_generic_api_key_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-generic" if name == "API_KEY" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-generic"
+
+    def test_evalhub_secret_generic_lowercase_api_key_fallback(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: "evalhub-apikey" if name == "api-key" else "",
+        )
+        assert resolve_api_key("judge") == "evalhub-apikey"
+
+    def test_evalhub_secret_uppercase_takes_precedence_over_lowercase(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps._read_evalhub_secret",
+            lambda name: (
+                "evalhub-upper" if name == "JUDGE_API_KEY" else "evalhub-lower" if name == "judge-api-key" else ""
+            ),
+        )
+        assert resolve_api_key("judge") == "evalhub-upper"
+
+    def test_evalhub_multimodel_naming_from_volume(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge_api-key").write_text("evalhub-multimodel")
+        assert resolve_api_key("judge") == "evalhub-multimodel"
+
+    def test_hyphenated_takes_precedence_over_evalhub_multimodel(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JUDGE_API_KEY", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(
+            "llama_stack_provider_trustyai_garak.core.pipeline_steps.MODEL_AUTH_MOUNT_PATH",
+            str(tmp_path),
+        )
+        (tmp_path / "judge-api-key").write_text("hyphenated-key")
+        (tmp_path / "judge_api-key").write_text("evalhub-key")
+        assert resolve_api_key("judge") == "hyphenated-key"
 
 
 class TestRedactApiKeys:
@@ -363,6 +490,22 @@ class TestResolveConfigApiKeys:
         }
         _resolve_config_api_keys(config)
         assert "api_key" not in config["run"]["langproviders"][0]
+
+    def test_ref_tokens_not_treated_as_placeholders(self, monkeypatch):
+        from llama_stack_provider_trustyai_garak.core.pipeline_steps import _resolve_config_api_keys
+
+        monkeypatch.setenv("TARGET_API_KEY", "should-not-be-used")
+        monkeypatch.setenv("JUDGE_API_KEY", "should-not-be-used")
+
+        config = {
+            "plugins": {
+                "generators": {"openai": {"OpenAICompatible": {"api_key": "api-key:ref", "uri": "http://gen"}}},
+                "detectors": {"judge": {"detector_model_config": {"api_key": "judge_api-key:ref", "uri": "http://j"}}},
+            }
+        }
+        _resolve_config_api_keys(config)
+        assert config["plugins"]["generators"]["openai"]["OpenAICompatible"]["api_key"] == "api-key:ref"
+        assert config["plugins"]["detectors"]["judge"]["detector_model_config"]["api_key"] == "judge_api-key:ref"
 
 
 class TestBuildTranslationLangproviders:
@@ -733,3 +876,99 @@ class TestLogKfpMetrics:
         }
         log_kfp_metrics(mock_metrics, result_dict, art_intents=True)
         mock_metrics.log_metric.assert_any_call("tbsa", 0.8)
+
+
+class TestExtractScanLogIssues:
+    def test_extracts_errors_and_warnings(self, tmp_path):
+        log_file = tmp_path / "scan.log"
+        log_file.write_text(
+            "2026-03-26 13:50:00,375  INFO  Applying probes.multilingual.TranslationIntent\n"
+            "2026-03-26 13:50:00,376  DEBUG  probe execute: <object at 0x7f>\n"
+            "2026-03-26 14:23:05,309  ERROR  Attack method failed: unable to allocate shared memory\n"
+            "2026-03-26 14:23:06,000  WARNING  Fallback behaviour activated\n"
+            "2026-03-26 14:23:07,000  INFO  probe init: <tap object>\n"
+        )
+        issues = _extract_scan_log_issues(log_file)
+        assert len(issues) == 2
+        assert "ERROR" in issues[0]
+        assert "Attack method failed" in issues[0]
+        assert "WARNING" in issues[1]
+        assert "Fallback" in issues[1]
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert _extract_scan_log_issues(tmp_path / "nonexistent.log") == []
+
+    def test_empty_file_returns_empty(self, tmp_path):
+        log_file = tmp_path / "scan.log"
+        log_file.write_text("")
+        assert _extract_scan_log_issues(log_file) == []
+
+    def test_no_issues_returns_empty(self, tmp_path):
+        log_file = tmp_path / "scan.log"
+        log_file.write_text(
+            "2026-03-26 13:50:00,375  INFO  All good\n2026-03-26 13:50:00,376  DEBUG  Verbose debug info\n"
+        )
+        assert _extract_scan_log_issues(log_file) == []
+
+    def test_unreadable_file_returns_empty(self, tmp_path, caplog):
+        import logging
+
+        log_file = tmp_path / "scan.log"
+        log_file.write_text("2026-03-26 14:23:05,309  ERROR  Some error\n")
+        log_file.chmod(0o000)
+        with caplog.at_level(logging.WARNING):
+            result = _extract_scan_log_issues(log_file)
+        assert result == []
+        assert "Could not read scan.log" in caplog.text
+        log_file.chmod(0o644)
+
+
+class TestGarakScanResultLogErrors:
+    def test_default_is_empty_list(self):
+        result = GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=Path("/tmp/scan"))
+        assert result.log_errors == []
+
+    def test_populated_via_constructor(self):
+        errors = ["2026-03-26 14:23:05,309  ERROR  Something broke"]
+        result = GarakScanResult(returncode=0, stdout="", stderr="", report_prefix=Path("/tmp/scan"), log_errors=errors)
+        assert result.log_errors == errors
+
+
+class TestSetupAndRunGarakLogErrors:
+    @patch("llama_stack_provider_trustyai_garak.core.garak_runner.convert_to_avid_report")
+    @patch("llama_stack_provider_trustyai_garak.core.garak_runner.run_garak_scan")
+    def test_success_with_log_errors_logs_warnings(self, mock_scan, mock_avid, caplog):
+        import logging
+
+        scan_dir = Path(tempfile.mkdtemp())
+        mock_result = GarakScanResult(
+            returncode=0,
+            stdout="ok",
+            stderr="",
+            report_prefix=scan_dir / "scan",
+            log_errors=["2026-03-26 14:23:05,309  ERROR  Attack method failed"],
+        )
+        mock_scan.return_value = mock_result
+        mock_avid.return_value = True
+
+        config = json.dumps({"plugins": {"probes": []}, "reporting": {}})
+        with caplog.at_level(logging.WARNING):
+            result = setup_and_run_garak(config, None, scan_dir, 300)
+        assert result.success
+        assert "1 error/warning entries" in caplog.text
+
+    @patch("llama_stack_provider_trustyai_garak.core.garak_runner.run_garak_scan")
+    def test_failure_includes_log_errors(self, mock_scan):
+        scan_dir = Path(tempfile.mkdtemp())
+        mock_result = GarakScanResult(
+            returncode=1,
+            stdout="",
+            stderr="error occurred",
+            report_prefix=scan_dir / "scan",
+            log_errors=["2026-03-26 14:23:05,309  ERROR  Attack method failed"],
+        )
+        mock_scan.return_value = mock_result
+
+        config = json.dumps({"plugins": {"probes": []}, "reporting": {}})
+        with pytest.raises(GarakError, match="scan.log errors"):
+            setup_and_run_garak(config, None, scan_dir, 300)
