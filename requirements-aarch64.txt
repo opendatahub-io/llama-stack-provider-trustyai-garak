@@ -3262,9 +3262,9 @@ sqlalchemy==2.0.44 \
     # via
     #   langchain
     #   llama-stack
-starlette==0.50.0 \
-    --hash=sha256:9e5391843ec9b6e472eed1365a78c8098cfceb7a74bfd4d6b1c0c0095efb3bca \
-    --hash=sha256:a2a17b22203254bcbc2e1f926d2d55f3f9497f769416b3190768befe598fa3ca
+starlette==1.9.0 \
+    --hash=sha256:3d931de246ed870e35ce605974440816ef895e592f255d1396cfdf191d4c4318 \
+    --hash=sha256:fd3f159936e882d06c1108f84688f7cda2cf85fc6a592a50edbd175e882c2ddc
     # via
     #   fastapi
     #   llama-stack
