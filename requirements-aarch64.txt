@@ -1415,9 +1415,9 @@ jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
     --hash=sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d
     # via jsonschema
-kfp==2.14.6 \
-    --hash=sha256:2d76aff91d8461e837989c2dc966c9dddaba7fcc37b7b8be4b0564282b1f613d \
-    --hash=sha256:9e94ff2e74465c27393736c295b6dc478b29cf9d0264950019b5167c7c53fd2e
+kfp==2.18.0 \
+    --hash=sha256:4afaeb45fd923c27a5958eac59c3a06f844441533e1c38c69214209392f7cbca \
+    --hash=sha256:8331041be2a8cca9188e5a4c716844afbb163cd0f34983654f40fee50b7dd451
     # via
     #   llama-stack-provider-trustyai-garak (pyproject.toml)
     #   kfp-kubernetes
