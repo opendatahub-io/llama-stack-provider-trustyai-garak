@@ -1421,9 +1421,9 @@ kfp==2.14.6 \
     # via
     #   llama-stack-provider-trustyai-garak (pyproject.toml)
     #   kfp-kubernetes
-kfp-kubernetes==2.14.6 \
-    --hash=sha256:34e69d5c3b4573c929feccd03d3aafa6e9177478774dfa93f74b12ea1d3e1e91 \
-    --hash=sha256:3ab5e67e05ec6ff1962643ef01d9fdad98ec74b4694d2420f16e8d3a7ddb72a2
+kfp-kubernetes==2.18.0 \
+    --hash=sha256:543eb2b591a42fd29baa1551c81a7cd371425360c41b8621296c77899192e35e \
+    --hash=sha256:de35b39e9341f7d9d95659fd8462717d18cbce19e80a9a39b2ff6331d8baa5a6
     # via llama-stack-provider-trustyai-garak (pyproject.toml)
 kfp-pipeline-spec==2.15.1 \
     --hash=sha256:124508281a20adea7933e2b9db03a02bc10c102bbe2138da91aec06cb9b4db03 \
