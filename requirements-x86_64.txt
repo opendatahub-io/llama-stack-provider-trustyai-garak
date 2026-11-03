@@ -1860,10 +1860,9 @@ numpy==1.26.4 \
 nvdlib==0.8.3 \
     --hash=sha256:ba9df19942351353da5f3aa9ae9e106bbacd505a89d72d15c49f94d822690128
     # via avidtools
-nvidia-cublas-cu12==12.8.4.1 \
-    --hash=sha256:47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af \
-    --hash=sha256:8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142 \
-    --hash=sha256:b86f6dd8935884615a0683b663891d43781b819ac4f2ba2b0c9604676af346d0
+nvidia-cublas-cu12==12.9.3.13 \
+    --hash=sha256:918a8781956115d34b1db49e0e7b7befba8d101661c4b560ed4d42e0e17bebc3 \
+    --hash=sha256:d7d51055f161b317c7105ddaae90e71eda059026074ffef93cf7cde2886bfe72
     # via
     #   nvidia-cudnn-cu12
     #   nvidia-cusolver-cu12
