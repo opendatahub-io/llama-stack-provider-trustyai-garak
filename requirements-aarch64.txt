@@ -1045,9 +1045,9 @@ greenlet==3.2.4 \
     --hash=sha256:f28588772bb5fb869a8eb331374ec06f24a83a9c25bfa1f38b6993afe9c1e968 \
     --hash=sha256:f47617f698838ba98f4ff4189aef02e7343952df3a615f847bb575c3feb177a7
     # via sqlalchemy
-grpc-google-iam-v1==0.14.3 \
-    --hash=sha256:7a7f697e017a067206a3dfef44e4c634a34d3dee135fe7d7a4613fe3e59217e6 \
-    --hash=sha256:879ac4ef33136c5491a6300e27575a9ec760f6cdf9a2518798c1b8977a5dc389
+grpc-google-iam-v1==0.14.6 \
+    --hash=sha256:042705a3ce306f289b9c6eafc3453b23f953bab955adcac3c36545758ccd681a \
+    --hash=sha256:fc0a683ace0a149184fcd08d667dd64d51ae65e5698e86f7136aa6002a8b5373
     # via google-cloud-translate
 grpcio==1.76.0 \
     --hash=sha256:035d90bc79eaa4bed83f524331d55e35820725c9fbb00ffa1904d5550ed7ede3 \
