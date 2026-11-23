@@ -12,6 +12,8 @@ jobs:
     if: ${{ github.repository == 'opendatahub-io/llama-stack-provider-trustyai-garak' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Accepted exception: the sync action pushes the sync/ branch and manages the PR in one
+    # step, so it needs both write scopes; it has no PR-only mode.
     permissions:
       contents: write
       pull-requests: write
