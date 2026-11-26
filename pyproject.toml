@@ -11,7 +11,7 @@ authors = [
 ]
 keywords = ["llama-stack", "garak", "red-teaming", "security", "ai-safety"]
 dependencies = [
-    "llama-stack>=0.3.0",
+    "llama-stack>=0.4.4",
     # Remote execution dependencies
     "kfp>=2.14.6",
     "kfp-kubernetes>=2.14.6",
