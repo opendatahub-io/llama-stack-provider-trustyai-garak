@@ -1393,9 +1393,9 @@ jsonpath-python==1.1.6 \
     --hash=sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4 \
     --hash=sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671
     # via mistralai
-jsonpointer==3.0.0 \
-    --hash=sha256:13e088adc14fca8b6aa8177c044e12701e6ad4b28ff10e65f2267a90109c9942 \
-    --hash=sha256:2b2d729f2091522d61c3b31f82e11870f60b68f43fbc705cb76bf4b832af59ef
+jsonpointer==3.12 \
+    --hash=sha256:7a3dcc11b64053eaa9c549e85e413f8d40a075215f793a331bed9182a14251ae \
+    --hash=sha256:89f391335ee2719ae72149e1bf30a4d4c7c5d92f15a3f53faa8d20cc7c6c7f19
     # via jsonpatch
 jsonschema==4.25.1 \
     --hash=sha256:3fba0169e345c7175110351d456342c364814cfcf3b964ba4587f22915230a63 \
